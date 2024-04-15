@@ -99,7 +99,7 @@ def new_member(message):
 def start_monitoring():
     while True:
         monitor_sites()
-        time.sleep(300)  # Check every 5 minutes
+        time.sleep(60)  # Check every minute
 
 if __name__ == "__main__":
     init_db()
