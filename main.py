@@ -3,9 +3,10 @@ import sqlite3
 import time
 import telebot
 from threading import Thread
+import validators
+from config import bot_token
 
-API_TOKEN = '7099691746:AAGNOT4EJ3qaZf7YDL_EB47pwmd2bsPS4bc'
-bot = telebot.TeleBot(API_TOKEN)
+bot = telebot.TeleBot(bot_token)
 
 def init_db():
     conn = sqlite3.connect('sites.db')
@@ -14,6 +15,31 @@ def init_db():
                  (domain TEXT PRIMARY KEY, status TEXT, downtime_start REAL, chat_id INTEGER)''')
     conn.commit()
     conn.close()
+
+
+def is_valid_domain(domain):
+    """Check if the domain name is valid using the validators library."""
+    return validators.domain(domain)
+
+def pluralize(time_value, time_label):
+    """Returns correctly pluralized label based on the time value."""
+    if time_value == 1:
+        return f"{int(time_value)} {time_label[:-1]}"  # Strip the 's' for singular
+    else:
+        return f"{int(time_value)} {time_label}"
+
+def seconds_to_hms(seconds):
+    """Convert seconds to hours, minutes, and seconds, with proper pluralization."""
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = []
+    if hours:
+        parts.append(pluralize(hours, "hours"))
+    if minutes:
+        parts.append(pluralize(minutes, "minutes"))
+    if seconds or not parts:  # always show seconds if no hours or minutes
+        parts.append(pluralize(seconds, "seconds"))
+    return " ".join(parts)
 
 def check_site(domain):
     try:
@@ -44,7 +70,8 @@ def update_site_status(domain, status, chat_id, conn):
             message = f"⚠️ {domain} is DOWN"
         elif status == "UP" and downtime_start:
             downtime = int(time.time() - downtime_start)
-            message = f"✅ {domain} is UP again after {downtime} seconds of downtime"
+            formatted_downtime = seconds_to_hms(downtime)
+            message = f"✅ {domain} is UP again after {formatted_downtime}"
             downtime_start = None
         else:
             message = f"✅ {domain} is UP"
@@ -53,26 +80,26 @@ def update_site_status(domain, status, chat_id, conn):
         c.execute('UPDATE monitored_sites SET status=?, downtime_start=? WHERE domain=?', (status, downtime_start, domain))
         conn.commit()
 
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-    bot.reply_to(message, "Welcome! To start monitoring a website, add this bot to a group with the website domain as the group title or send the domain directly to this bot.")
-
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    domain = message.text.strip()
-    if domain:  # You should implement a more robust domain validation here
-        conn = sqlite3.connect('sites.db')
-        c = conn.cursor()
-        c.execute('INSERT OR IGNORE INTO monitored_sites (domain, status, downtime_start, chat_id) VALUES (?, ?, ?, ?)',
-                  (domain, 'UNKNOWN', None, message.chat.id))
-        conn.commit()
-        conn.close()
-        bot.reply_to(message, f"Monitoring started for {domain}.")
+@bot.message_handler(content_types=['new_chat_members'])
+def new_member(message):
+    new_members = message.new_chat_members
+    if any(member.id == bot.get_me().id for member in new_members):
+        domain = message.chat.title.strip()
+        if is_valid_domain(domain):
+            conn = sqlite3.connect('sites.db')
+            c = conn.cursor()
+            c.execute('INSERT OR IGNORE INTO monitored_sites (domain, status, downtime_start, chat_id) VALUES (?, ?, ?, ?)',
+                      (domain, 'UNKNOWN', None, message.chat.id))
+            conn.commit()
+            conn.close()
+            bot.send_message(message.chat.id, f"Monitoring started for {domain}.")
+        else:
+            bot.send_message(message.chat.id, "Invalid domain name provided.")
 
 def start_monitoring():
     while True:
         monitor_sites()
-        time.sleep(60)  # Check every minute
+        time.sleep(300)  # Check every 5 minutes
 
 if __name__ == "__main__":
     init_db()
