@@ -60,25 +60,45 @@ def monitor_sites():
 
 def update_site_status(domain, status, chat_id, conn):
     c = conn.cursor()
+    # Retrieve the current status and the start time of the downtime from the database
     c.execute('SELECT status, downtime_start FROM monitored_sites WHERE domain=?', (domain,))
     row = c.fetchone()
     previous_status, downtime_start = row if row else (None, None)
 
     if previous_status != status:
         if status == "DOWN":
-            downtime_start = time.time()
-            message = f"⚠️ {domain} is DOWN"
-        elif status == "UP" and downtime_start:
-            downtime = int(time.time() - downtime_start)
-            formatted_downtime = seconds_to_hms(downtime)
-            message = f"✅ {domain} is UP again after {formatted_downtime}"
-            downtime_start = None
-        else:
-            message = f"✅ {domain} is UP"
+            # If downtime start is not recorded, set it when first detected as DOWN
+            if not downtime_start:
+                downtime_start = time.time()
+                c.execute('UPDATE monitored_sites SET downtime_start=? WHERE domain=?', (downtime_start, domain))
+                conn.commit()
+        elif status == "UP":
+            if downtime_start:
+                downtime = time.time() - downtime_start
+                # Send a message if the site was DOWN for more than 10 minutes
+                if downtime >= 600:  # 10 minutes in seconds
+                    formatted_downtime = seconds_to_hms(downtime)
+                    message = f"✅ {domain} is UP again after {formatted_downtime} of downtime."
+                    bot.send_message(chat_id, message)
+                # Reset the downtime start after the site becomes available
+                c.execute('UPDATE monitored_sites SET downtime_start=NULL WHERE domain=?', (domain,))
+                conn.commit()
 
-        bot.send_message(chat_id, message)
-        c.execute('UPDATE monitored_sites SET status=?, downtime_start=? WHERE domain=?', (status, downtime_start, domain))
-        conn.commit()
+    # Check if the site has been DOWN for more than 10 minutes without sending a message yet
+    else:
+        if status == "DOWN" and downtime_start:
+            downtime = time.time() - downtime_start
+            if downtime >= 600:  # 10 minutes in seconds
+                # Send a notification if no notification has been sent yet after 10 minutes of downtime
+                message = f"⚠️ {domain} has been DOWN for more than 10 minutes."
+                bot.send_message(chat_id, message)
+                # To prevent repeated messages, reset the downtime_start (or set another flag as needed)
+                c.execute('UPDATE monitored_sites SET downtime_start=NULL WHERE domain=?', (domain,))
+                conn.commit()
+
+    # Update the status in any case
+    c.execute('UPDATE monitored_sites SET status=? WHERE domain=?', (status, domain))
+    conn.commit()
 
 @bot.message_handler(content_types=['new_chat_members'])
 def new_member(message):
