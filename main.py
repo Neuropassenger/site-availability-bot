@@ -8,11 +8,18 @@ from config import bot_token
 
 bot = telebot.TeleBot(bot_token)
 
+
 def init_db():
     conn = sqlite3.connect('sites.db')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS monitored_sites
-                 (domain TEXT PRIMARY KEY, status TEXT, downtime_start REAL, chat_id INTEGER)''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS monitored_sites (
+            domain TEXT PRIMARY KEY,
+            status TEXT,
+            downtime_start REAL,
+            down_notification_sent BOOLEAN DEFAULT FALSE
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -60,45 +67,45 @@ def monitor_sites():
 
 def update_site_status(domain, status, chat_id, conn):
     c = conn.cursor()
-    # Retrieve the current status and the start time of the downtime from the database
-    c.execute('SELECT status, downtime_start FROM monitored_sites WHERE domain=?', (domain,))
+    # Retrieve the current status, the start time of the downtime, and notification sent status
+    c.execute('SELECT status, downtime_start, down_notification_sent FROM monitored_sites WHERE domain=?', (domain,))
     row = c.fetchone()
-    previous_status, downtime_start = row if row else (None, None)
+    previous_status, downtime_start, down_notification_sent = row if row else (None, None, False)
 
     if previous_status != status:
         if status == "DOWN":
             # If downtime start is not recorded, set it when first detected as DOWN
             if not downtime_start:
                 downtime_start = time.time()
-                c.execute('UPDATE monitored_sites SET downtime_start=? WHERE domain=?', (downtime_start, domain))
+                c.execute('UPDATE monitored_sites SET downtime_start=?, down_notification_sent=FALSE WHERE domain=?', (downtime_start, domain))
                 conn.commit()
         elif status == "UP":
             if downtime_start:
                 downtime = time.time() - downtime_start
                 # Send a message if the site was DOWN for more than 10 minutes
-                if downtime >= 600:  # 10 minutes in seconds
+                if downtime >= 600 and down_notification_sent:
                     formatted_downtime = seconds_to_hms(downtime)
                     message = f"✅ {domain} is UP again after {formatted_downtime} of downtime."
                     bot.send_message(chat_id, message)
-                # Reset the downtime start after the site becomes available
-                c.execute('UPDATE monitored_sites SET downtime_start=NULL WHERE domain=?', (domain,))
+                # Reset the downtime start and notification sent flag after the site becomes available
+                c.execute('UPDATE monitored_sites SET downtime_start=NULL, down_notification_sent=FALSE WHERE domain=?', (domain,))
                 conn.commit()
 
-    # Check if the site has been DOWN for more than 10 minutes without sending a message yet
     else:
         if status == "DOWN" and downtime_start:
             downtime = time.time() - downtime_start
-            if downtime >= 600:  # 10 minutes in seconds
+            if downtime >= 600 and not down_notification_sent:
                 # Send a notification if no notification has been sent yet after 10 minutes of downtime
                 message = f"⚠️ {domain} has been DOWN for more than 10 minutes."
                 bot.send_message(chat_id, message)
-                # To prevent repeated messages, reset the downtime_start (or set another flag as needed)
-                c.execute('UPDATE monitored_sites SET downtime_start=NULL WHERE domain=?', (domain,))
+                # Update the notification sent flag to prevent repeated messages
+                c.execute('UPDATE monitored_sites SET down_notification_sent=TRUE WHERE domain=?', (domain,))
                 conn.commit()
 
-    # Update the status in any case
+    # Always update the status regardless of the condition above
     c.execute('UPDATE monitored_sites SET status=? WHERE domain=?', (status, domain))
     conn.commit()
+
 
 @bot.message_handler(content_types=['new_chat_members'])
 def new_member(message):
