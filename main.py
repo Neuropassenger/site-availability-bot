@@ -8,7 +8,6 @@ import logging
 from config import bot_token
 
 bot = telebot.TeleBot(bot_token)
-telebot.logger.setLevel(logging.INFO)
 
 def init_db():
     conn = sqlite3.connect('sites.db')
