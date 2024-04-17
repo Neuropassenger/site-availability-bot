@@ -4,10 +4,11 @@ import time
 import telebot
 from threading import Thread
 import validators
+import logging
 from config import bot_token
 
 bot = telebot.TeleBot(bot_token)
-
+telebot.logger.setLevel(logging.INFO)
 
 def init_db():
     conn = sqlite3.connect('sites.db')
@@ -17,6 +18,7 @@ def init_db():
             domain TEXT PRIMARY KEY,
             status TEXT,
             downtime_start REAL,
+            chat_id INTEGER,
             down_notification_sent BOOLEAN DEFAULT FALSE
         )
     ''')
@@ -106,7 +108,6 @@ def update_site_status(domain, status, chat_id, conn):
     c.execute('UPDATE monitored_sites SET status=? WHERE domain=?', (status, domain))
     conn.commit()
 
-
 @bot.message_handler(content_types=['new_chat_members'])
 def new_member(message):
     new_members = message.new_chat_members
@@ -131,4 +132,4 @@ def start_monitoring():
 if __name__ == "__main__":
     init_db()
     Thread(target=start_monitoring).start()
-    bot.polling(none_stop=True)
+    bot.polling(non_stop=True)
