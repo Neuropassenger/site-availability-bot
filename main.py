@@ -5,7 +5,7 @@ import telebot
 from threading import Thread
 import validators
 import logging
-from config import bot_token
+from config import bot_token, downtime_max_interval
 
 bot = telebot.TeleBot(bot_token)
 
@@ -84,7 +84,7 @@ def update_site_status(domain, status, chat_id, conn):
             if downtime_start:
                 downtime = time.time() - downtime_start
                 # Send a message if the site was DOWN for more than 10 minutes
-                if downtime >= 600 and down_notification_sent:
+                if downtime >= downtime_max_interval and down_notification_sent:
                     formatted_downtime = seconds_to_hms(downtime)
                     message = f"✅ {domain} is UP again after {formatted_downtime} of downtime."
                     bot.send_message(chat_id, message)
@@ -95,7 +95,7 @@ def update_site_status(domain, status, chat_id, conn):
     else:
         if status == "DOWN" and downtime_start:
             downtime = time.time() - downtime_start
-            if downtime >= 600 and not down_notification_sent:
+            if downtime >= downtime_max_interval and not down_notification_sent:
                 # Send a notification if no notification has been sent yet after 10 minutes of downtime
                 message = f"⚠️ {domain} has been DOWN for more than 10 minutes."
                 bot.send_message(chat_id, message)
